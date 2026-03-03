@@ -31,7 +31,7 @@ mkdir -p "$APP_DIR"
 cat > "$APP_FILE" << 'PY'
 import os
 import logging
-from flask import Flask, Response
+from flask import Flask, Response, request
 from google.cloud import storage
 import google.cloud.logging
 from google.cloud.logging.handlers import CloudLoggingHandler
@@ -52,6 +52,15 @@ bucket = storage_client.bucket(BUCKET_NAME)
 
 app = Flask(__name__)
 
+@app.before_request
+def reject_non_get():
+    # HW4 Point 3: any non-GET method should return 501 + WARNING log
+    if request.method != "GET":
+        logger.warning(
+            "501 not implemented",
+            extra={"method": request.method, "path": request.path}
+        )
+        return Response("not implemented\n", status=501, mimetype="text/plain")
 @app.get("/")
 def root():
     return Response("OK. Try /0.html\n", status=200, mimetype="text/plain")
