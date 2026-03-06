@@ -23,10 +23,10 @@ PORT="${PORT:-8080}"
 PROJECT_ID="$(curl -fsH "Metadata-Flavor: Google" \
   "http://metadata.google.internal/computeMetadata/v1/project/project-id")"
 
-# Pub/Sub topic id (can be overridden by instance metadata too if you want)
-TOPIC_ID="$(curl -fsH "Metadata-Flavor: Google" \
-  "http://metadata.google.internal/computeMetadata/v1/instance/attributes/TOPIC_ID" || true)"
-TOPIC_ID="${TOPIC_ID:-forbidden-requests}"
+# Pub/Sub topic name (from instance metadata, with default)
+TOPIC_NAME="$(curl -fsH "Metadata-Flavor: Google" \
+  "http://metadata.google.internal/computeMetadata/v1/instance/attributes/TOPIC_NAME" || true)"
+TOPIC_NAME="${TOPIC_NAME:-hw4-forbidden-topic}"
 
 APP_DIR="/opt/hw4-web"
 APP_FILE="$APP_DIR/app.py"
@@ -39,8 +39,8 @@ mkdir -p "$APP_DIR"
 # Write Flask app
 cat > "$APP_FILE" << 'PY'
 import os
+import json
 import logging
-import requests
 from flask import Flask, Response, request
 from google.cloud import storage
 import google.cloud.logging
@@ -52,7 +52,7 @@ PREFIX = os.environ.get("PREFIX", "")
 PORT = int(os.environ.get("PORT", "8080"))
 
 PROJECT_ID = os.environ["PROJECT_ID"]
-TOPIC_ID = os.environ.get("TOPIC_ID", "forbidden-requests")
+TOPIC_NAME = os.environ.get("TOPIC_NAME", "hw4-forbidden-topic")
 
 BANNED = {
     "North Korea", "Iran", "Cuba", "Myanmar", "Iraq",
@@ -72,30 +72,9 @@ bucket = storage_client.bucket(BUCKET_NAME)
 
 # Pub/Sub publisher
 publisher = pubsub_v1.PublisherClient()
-topic_path = publisher.topic_path(PROJECT_ID, TOPIC_ID)
+topic_path = publisher.topic_path(PROJECT_ID, TOPIC_NAME)
 
 app = Flask(__name__)
-
-def client_ip() -> str:
-    """
-    Tries X-Forwarded-For first (useful if you add a header in testing),
-    else uses request.remote_addr.
-    """
-    xff = request.headers.get("X-Forwarded-For")
-    if xff:
-        return xff.split(",")[0].strip()
-    return request.remote_addr or ""
-
-def ip_to_country_name(ip: str) -> str:
-    """
-    ipapi returns a country name as plain text, e.g. "United States".
-    May return empty / "Undefined" for private IPs.
-    """
-    try:
-        r = requests.get(f"https://ipapi.co/{ip}/country_name/", timeout=2)
-        return (r.text or "").strip()
-    except Exception:
-        return ""
 
 @app.before_request
 def reject_non_get():
@@ -113,18 +92,23 @@ def root():
 
 @app.get("/<path:filename>")
 def get_file(filename: str):
-    # ---- Q7 banned-country enforcement (GET requests) ----
-    ip = client_ip()
-    country = ip_to_country_name(ip)
+    # ---- Q7 banned-country enforcement (deterministic via header) ----
+    # For testing: curl -H "X-Country: North Korea" http://IP:8080/0.html
+    country = (request.headers.get("X-Country") or "").strip()
 
     if country in BANNED:
-        msg = f"FORBIDDEN export-control request from {country} ip={ip} path={request.path}"
-        logger.critical(msg, extra={"country": country, "ip": ip, "path": request.path})
-        try:
-            publisher.publish(topic_path, msg.encode("utf-8"))
-        except Exception as e:
-            # still return forbidden even if publish fails
-            logger.critical(f"PubSub publish failed: {e}", extra={"country": country, "ip": ip, "path": request.path})
+        msg = {
+            "event": "FORBIDDEN",
+            "country": country,
+            "path": request.path,
+        }
+
+        # CRITICAL log requirement
+        logger.critical("403 forbidden (banned country)", extra=msg)
+
+        # publish to Pub/Sub for service 2
+        publisher.publish(topic_path, json.dumps(msg).encode("utf-8"))
+
         return Response("forbidden\n", status=403, mimetype="text/plain")
 
     # ---- normal GCS file serving ----
@@ -145,7 +129,7 @@ PY
 # Create venv + install deps
 python3 -m venv "$APP_DIR/venv"
 "$APP_DIR/venv/bin/pip" install --upgrade pip
-"$APP_DIR/venv/bin/pip" install flask google-cloud-storage google-cloud-logging google-cloud-pubsub requests
+"$APP_DIR/venv/bin/pip" install flask google-cloud-storage google-cloud-logging google-cloud-pubsub
 
 # systemd service (auto-start)
 cat > /etc/systemd/system/hw4-web.service << EOF
@@ -160,7 +144,7 @@ Environment=BUCKET_NAME=$BUCKET_NAME
 Environment=PREFIX=$PREFIX
 Environment=PORT=$PORT
 Environment=PROJECT_ID=$PROJECT_ID
-Environment=TOPIC_ID=$TOPIC_ID
+Environment=TOPIC_NAME=$TOPIC_NAME
 WorkingDirectory=$APP_DIR
 ExecStart=$APP_DIR/venv/bin/python $APP_FILE
 Restart=always
