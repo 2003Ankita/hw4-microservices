@@ -3,7 +3,7 @@ set -euxo pipefail
 
 PROJECT_ID=$(gcloud config get-value project)
 REGION="us-central1"
-ZONE="us-central1-b"
+ZONE="us-central1-c"
 
 VM_NAME="hw5-web-vm"
 SA_NAME="hw5-web-sa"
@@ -60,7 +60,7 @@ fi
 if ! gcloud compute instances describe "$VM_NAME" --zone="$ZONE" >/dev/null 2>&1; then
   gcloud compute instances create "$VM_NAME" \
     --zone="$ZONE" \
-    --machine-type=e2-standard-2  \
+    --machine-type=n2-standard-2  \
     --image-family=ubuntu-2204-lts \
     --image-project=ubuntu-os-cloud \
     --address="$STATIC_IP_NAME" \
