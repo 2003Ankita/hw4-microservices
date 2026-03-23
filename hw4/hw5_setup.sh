@@ -60,7 +60,7 @@ fi
 if ! gcloud compute instances describe "$VM_NAME" --zone="$ZONE" >/dev/null 2>&1; then
   gcloud compute instances create "$VM_NAME" \
     --zone="$ZONE" \
-    --machine-type=e2-micro \
+    --machine-type=e2-standard-2  \
     --image-family=ubuntu-2204-lts \
     --image-project=ubuntu-os-cloud \
     --address="$STATIC_IP_NAME" \
