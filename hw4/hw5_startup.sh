@@ -56,6 +56,7 @@ cat > "$APP_FILE" << 'PY'
 import os
 import json
 import logging
+import time
 from flask import Flask, Response, request
 from google.cloud import storage
 import google.cloud.logging
@@ -105,6 +106,18 @@ db_pool = ThreadedConnectionPool(
 
 app = Flask(__name__)
 
+def send_text_response(body, status):
+    return Response(body, status=status, mimetype="text/plain")
+
+def send_html_response(body, status):
+    return Response(body, status=status, mimetype="text/html")
+    
+def timed_call(fn, *args, **kwargs):
+    start = time.perf_counter()
+    result = fn(*args, **kwargs)
+    elapsed = time.perf_counter() - start
+    return result, elapsed
+
 def first_header(*names):
     for name in names:
         value = request.headers.get(name)
@@ -140,6 +153,16 @@ def extract_request_metadata(filename):
         "is_banned": country in BANNED,
         "requested_file": filename
     }
+
+def read_file_from_gcs(filename):
+    obj_name = f"{PREFIX}{filename}" if PREFIX else filename
+    blob = bucket.blob(obj_name)
+
+    if not blob.exists():
+        return None, obj_name
+
+    data = blob.download_as_bytes()
+    return data, obj_name
 
 def insert_request_log(meta):
     conn = db_pool.getconn()
@@ -179,33 +202,66 @@ def insert_error_log(requested_file, error_code):
 def reject_non_get():
     if request.method != "GET":
         requested_file = request.path.lstrip("/") or "ROOT"
-        meta = extract_request_metadata(requested_file)
 
+        meta, header_time = timed_call(extract_request_metadata, requested_file)
+
+        db_time = 0.0
         try:
-            insert_request_log(meta)
-            insert_error_log(requested_file, 501)
+            _, t1 = timed_call(insert_request_log, meta)
+            _, t2 = timed_call(insert_error_log, requested_file, 501)
+            db_time = t1 + t2
         except Exception as e:
             logger.exception(f"DB logging failed for 501: {e}")
+
+        response, response_time = timed_call(send_text_response, "not implemented\n", 501)
+
+        logger.info(
+            "timing_metrics",
+            extra={
+                "path": request.path,
+                "status_code": 501,
+                "header_extract_seconds": header_time,
+                "gcs_read_seconds": 0.0,
+                "db_insert_seconds": db_time,
+                "response_send_seconds": response_time
+            }
+        )
 
         logger.warning(
             "501 not implemented",
             extra={"method": request.method, "path": request.path}
         )
-        return Response("not implemented\n", status=501, mimetype="text/plain")
+        return response
 
 @app.get("/")
 def root():
+    meta, header_time = timed_call(extract_request_metadata, "ROOT")
+
+    db_time = 0.0
     try:
-        meta = extract_request_metadata("ROOT")
-        insert_request_log(meta)
+        _, db_time = timed_call(insert_request_log, meta)
     except Exception as e:
         logger.exception(f"DB logging failed for root request: {e}")
 
-    return Response("OK. Try /0.html\n", status=200, mimetype="text/plain")
+    response, response_time = timed_call(send_text_response, "OK. Try /0.html\n", 200)
+
+    logger.info(
+        "timing_metrics",
+        extra={
+            "path": request.path,
+            "status_code": 200,
+            "header_extract_seconds": header_time,
+            "gcs_read_seconds": 0.0,
+            "db_insert_seconds": db_time,
+            "response_send_seconds": response_time
+        }
+    )
+
+    return response
 
 @app.get("/<path:filename>")
 def get_file(filename: str):
-    meta = extract_request_metadata(filename)
+    meta, header_time = timed_call(extract_request_metadata, filename)
     country = meta["country"]
 
     if country in BANNED:
@@ -215,37 +271,82 @@ def get_file(filename: str):
             "path": request.path,
         }
 
+        db_time = 0.0
         try:
-            insert_request_log(meta)
-            insert_error_log(filename, 403)
+            _, t1 = timed_call(insert_request_log, meta)
+            _, t2 = timed_call(insert_error_log, filename, 403)
+            db_time = t1 + t2
         except Exception as e:
             logger.exception(f"DB logging failed for 403: {e}")
 
+        response, response_time = timed_call(send_text_response, "forbidden\n", 403)
+
+        logger.info(
+            "timing_metrics",
+            extra={
+                "path": request.path,
+                "status_code": 403,
+                "header_extract_seconds": header_time,
+                "gcs_read_seconds": 0.0,
+                "db_insert_seconds": db_time,
+                "response_send_seconds": response_time
+            }
+        )
+
         logger.critical("403 forbidden (banned country)", extra=msg)
         publisher.publish(topic_path, json.dumps(msg).encode("utf-8"))
-        return Response("forbidden\n", status=403, mimetype="text/plain")
+        return response
 
-    obj_name = f"{PREFIX}{filename}" if PREFIX else filename
-    blob = bucket.blob(obj_name)
+    file_result, gcs_time = timed_call(read_file_from_gcs, filename)
+    data, obj_name = file_result
 
-    if not blob.exists():
+    if data is None:
+        db_time = 0.0
         try:
-            insert_request_log(meta)
-            insert_error_log(filename, 404)
+            _, t1 = timed_call(insert_request_log, meta)
+            _, t2 = timed_call(insert_error_log, filename, 404)
+            db_time = t1 + t2
         except Exception as e:
             logger.exception(f"DB logging failed for 404: {e}")
 
+        response, response_time = timed_call(send_text_response, "not found\n", 404)
+
+        logger.info(
+            "timing_metrics",
+            extra={
+                "path": request.path,
+                "status_code": 404,
+                "header_extract_seconds": header_time,
+                "gcs_read_seconds": gcs_time,
+                "db_insert_seconds": db_time,
+                "response_send_seconds": response_time
+            }
+        )
+
         logger.warning("404 not found", extra={"object": obj_name, "path": request.path})
-        return Response("not found\n", status=404, mimetype="text/plain")
+        return response
 
-    data = blob.download_as_bytes()
-
+    db_time = 0.0
     try:
-        insert_request_log(meta)
+        _, db_time = timed_call(insert_request_log, meta)
     except Exception as e:
         logger.exception(f"DB logging failed for 200: {e}")
 
-    return Response(data, status=200, mimetype="text/html")
+    response, response_time = timed_call(send_html_response, data, 200)
+
+    logger.info(
+        "timing_metrics",
+        extra={
+            "path": request.path,
+            "status_code": 200,
+            "header_extract_seconds": header_time,
+            "gcs_read_seconds": gcs_time,
+            "db_insert_seconds": db_time,
+            "response_send_seconds": response_time
+        }
+    )
+
+    return response
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=PORT)
