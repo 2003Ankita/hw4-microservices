@@ -3,7 +3,7 @@ set -euxo pipefail
 
 PROJECT_ID=$(gcloud config get-value project)
 REGION="us-central1"
-ZONE="us-central1-a"
+ZONE="us-central1-b"
 
 VM_NAME="hw5-web-vm"
 SA_NAME="hw5-web-sa"
