@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euxo pipefail
 
-PROJECT_ID="${1:-$(gcloud config get-value project)}"
+PROJECT_ID="sustained-flow-485619-g3"
 REGION="us-central1"
 ZONE="us-central1-a"
 
@@ -11,7 +11,7 @@ DB_USER="hw5user"
 DB_PASSWORD="Hw5StrongPass123!"
 
 echo "Using project: $PROJECT_ID"
-gcloud config set project "$PROJECT_ID"
+PROJECT_ID="sustained-flow-485619-g3"
 
 echo "Enabling required services..."
 gcloud services enable \

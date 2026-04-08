@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euxo pipefail
 
-PROJECT_ID=$(gcloud config get-value project)
+PROJECT_ID="sustained-flow-485619-g3"
 REGION="us-central1"
 ZONE="us-central1-a"
 
@@ -18,7 +18,9 @@ SQL_INSTANCE="hw5-db"
 DB_NAME="hw5logs"
 DB_USER="hw5user"
 DB_PASSWORD="Hw5StrongPass123!"
-INSTANCE_CONNECTION_NAME=$(gcloud sql instances describe "$SQL_INSTANCE" --format="value(connectionName)")
+INSTANCE_CONNECTION_NAME=$(gcloud sql instances describe "$SQL_INSTANCE" --format="value(connectionINSTANCE_CONNECTION_NAME=$(gcloud sql instances describe "$SQL_INSTANCE" \
+  --project="$PROJECT_ID" \
+  --format="value(connectionName)")Name)")
 TOPIC_NAME="hw4-forbidden-topic"
 
 echo "Using project: $PROJECT_ID"
