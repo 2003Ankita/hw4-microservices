@@ -19,16 +19,16 @@ PORT="$(curl -fsH "Metadata-Flavor: Google" \
   "http://metadata.google.internal/computeMetadata/v1/instance/attributes/PORT" || true)"
 PORT="${PORT:-8080}"
 
-# Project ID from metadata server (recommended)
+# Project ID from metadata server
 PROJECT_ID="$(curl -fsH "Metadata-Flavor: Google" \
   "http://metadata.google.internal/computeMetadata/v1/project/project-id")"
 
-# Pub/Sub topic name (from instance metadata, with default)
+# Pub/Sub topic name
 TOPIC_NAME="$(curl -fsH "Metadata-Flavor: Google" \
   "http://metadata.google.internal/computeMetadata/v1/instance/attributes/TOPIC_NAME" || true)"
 TOPIC_NAME="${TOPIC_NAME:-hw4-forbidden-topic}"
 
-APP_DIR="/opt/hw4-web"
+APP_DIR="/opt/hw8-web"
 APP_FILE="$APP_DIR/app.py"
 
 apt-get update
@@ -41,6 +41,7 @@ cat > "$APP_FILE" << 'PY'
 import os
 import json
 import logging
+import requests
 from flask import Flask, Response, request
 from google.cloud import storage
 import google.cloud.logging
@@ -59,10 +60,22 @@ BANNED = {
     "Libya", "Sudan", "Zimbabwe", "Syria"
 }
 
+# Retrieve zone from metadata server
+def get_zone():
+    try:
+        metadata_url = "http://metadata.google.internal/computeMetadata/v1/instance/zone"
+        headers = {"Metadata-Flavor": "Google"}
+        response = requests.get(metadata_url, headers=headers, timeout=2)
+        return response.text.split("/")[-1]
+    except Exception:
+        return "unknown-zone"
+
+ZONE = get_zone()
+
 # Cloud Logging handler
 cl = google.cloud.logging.Client()
 handler = CloudLoggingHandler(cl)
-logger = logging.getLogger("hw4-web")
+logger = logging.getLogger("hw8-web")
 logger.setLevel(logging.INFO)
 logger.addHandler(handler)
 
@@ -78,13 +91,22 @@ app = Flask(__name__)
 
 @app.before_request
 def reject_non_get():
-    # HW4 Point 3: any non-GET method should return 501 + WARNING log
     if request.method != "GET":
         logger.warning(
             "501 not implemented",
             extra={"method": request.method, "path": request.path}
         )
-        return Response("not implemented\n", status=501, mimetype="text/plain")
+        return Response(
+            "not implemented\n",
+            status=501,
+            mimetype="text/plain",
+            headers={"X-Zone": ZONE}
+        )
+
+@app.after_request
+def add_zone_header(response):
+    response.headers["X-Zone"] = ZONE
+    return response
 
 @app.get("/")
 def root():
@@ -92,8 +114,7 @@ def root():
 
 @app.get("/<path:filename>")
 def get_file(filename: str):
-    # ---- Q7 banned-country enforcement (deterministic via header) ----
-    # For testing: curl -H "X-Country: North Korea" http://IP:8080/0.html
+    # Banned-country enforcement
     country = (request.headers.get("X-Country") or "").strip()
 
     if country in BANNED:
@@ -103,38 +124,57 @@ def get_file(filename: str):
             "path": request.path,
         }
 
-        # CRITICAL log requirement
         logger.critical("403 forbidden (banned country)", extra=msg)
-
-        # publish to Pub/Sub for service 2
         publisher.publish(topic_path, json.dumps(msg).encode("utf-8"))
 
-        return Response("forbidden\n", status=403, mimetype="text/plain")
+        return Response(
+            "forbidden\n",
+            status=403,
+            mimetype="text/plain",
+            headers={"X-Zone": ZONE}
+        )
 
-    # ---- normal GCS file serving ----
     obj_name = f"{PREFIX}{filename}" if PREFIX else filename
     blob = bucket.blob(obj_name)
 
     if not blob.exists():
-        logger.warning("404 not found", extra={"object": obj_name, "path": request.path})
-        return Response("not found\n", status=404, mimetype="text/plain")
+        logger.warning(
+            "404 not found",
+            extra={"object": obj_name, "path": request.path}
+        )
+        return Response(
+            "not found\n",
+            status=404,
+            mimetype="text/plain",
+            headers={"X-Zone": ZONE}
+        )
 
     data = blob.download_as_bytes()
-    return Response(data, status=200, mimetype="text/html")
+    return Response(
+        data,
+        status=200,
+        mimetype="text/html",
+        headers={"X-Zone": ZONE}
+    )
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=PORT)
 PY
 
-# Create venv + install deps
+# Create virtual environment and install dependencies
 python3 -m venv "$APP_DIR/venv"
 "$APP_DIR/venv/bin/pip" install --upgrade pip
-"$APP_DIR/venv/bin/pip" install flask google-cloud-storage google-cloud-logging google-cloud-pubsub
+"$APP_DIR/venv/bin/pip" install \
+    flask \
+    google-cloud-storage \
+    google-cloud-logging \
+    google-cloud-pubsub \
+    requests
 
-# systemd service (auto-start)
-cat > /etc/systemd/system/hw4-web.service << EOF
+# Create systemd service
+cat > /etc/systemd/system/hw8-web.service << EOF
 [Unit]
-Description=HW4 Web Server
+Description=HW8 Web Server
 After=network-online.target
 Wants=network-online.target
 
@@ -155,8 +195,8 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable hw4-web.service
-systemctl restart hw4-web.service
-systemctl status hw4-web.service --no-pager || true
+systemctl enable hw8-web.service
+systemctl restart hw8-web.service
+systemctl status hw8-web.service --no-pager || true
 
 touch /var/log/startup_already_done
