@@ -3,9 +3,9 @@ import time
 from collections import defaultdict
 from datetime import datetime
 
-LOAD_BALANCER_IP = "34.182.95.68"  # Replace if different
+LOAD_BALANCER_IP = "34.182.95.68"  # Replace if needed
 PORT = 8080
-URL = f"http://{LOAD_BALANCER_IP}:{PORT}/0.html"
+URL = f"http://{LOAD_BALANCER_IP}:{PORT}/"
 
 zone_counts = defaultdict(int)
 start_time = datetime.now()
@@ -17,7 +17,7 @@ try:
     while True:
         timestamp = datetime.now().strftime("%H:%M:%S")
         try:
-            response = requests.get(URL, timeout=5)
+            response = requests.get(URL, timeout=10)
             zone = response.headers.get("X-Zone", "Unknown")
             zone_counts[zone] += 1
             print(f"[{timestamp}] Status: {response.status_code}, Zone: {zone}")
