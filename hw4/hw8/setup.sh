@@ -57,7 +57,19 @@ create_vm() {
   local VM_NAME=$1
   local ZONE=$2
 
-  if ! gcloud compute instances describe "$VM_NAME" --zone="$ZONE" >/dev/null 2>&1; then
+  if gcloud compute instances describe "$VM_NAME" --zone="$ZONE" >/dev/null 2>&1; then
+    STATUS=$(gcloud compute instances describe "$VM_NAME" \
+      --zone="$ZONE" \
+      --format="get(status)")
+
+    if [[ "$STATUS" == "TERMINATED" ]]; then
+      echo "Starting existing VM: $VM_NAME"
+      gcloud compute instances start "$VM_NAME" --zone="$ZONE"
+    else
+      echo "VM $VM_NAME already running."
+    fi
+  else
+    echo "Creating VM: $VM_NAME"
     gcloud compute instances create "$VM_NAME" \
       --zone="$ZONE" \
       --machine-type=e2-micro \
@@ -66,7 +78,7 @@ create_vm() {
       --tags=http-server \
       --scopes=https://www.googleapis.com/auth/cloud-platform \
       --metadata=BUCKET_NAME=$BUCKET_NAME,PREFIX=$PREFIX,PORT=$PORT \
-      --metadata-from-file=startup-script=startup.sh
+      --metadata-from-file startup-script=startup.sh
   fi
 }
 
