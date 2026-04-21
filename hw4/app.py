@@ -1,5 +1,4 @@
-# Write Flask app
-cat > "$APP_FILE" << 'PY'
+
 import os
 import json
 import logging
@@ -90,4 +89,3 @@ def get_file(filename: str):
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=PORT)
-PY
