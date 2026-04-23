@@ -69,7 +69,10 @@ def root():
 def get_file(filename: str):
 
     # ---- banned country logic ----
-    country = (request.headers.get("X-Country") or "").strip()
+    country = request.headers.get("X-Country", "").strip()
+
+    print("DEBUG HEADERS:", dict(request.headers))
+    print("DEBUG COUNTRY:", country)
 
     if country in BANNED:
         msg = {
