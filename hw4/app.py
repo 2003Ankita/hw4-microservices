@@ -39,13 +39,8 @@ except Exception as e:
 # -------------------------------
 # Setup Pub/Sub (CRITICAL)
 # -------------------------------
-try:
-    publisher = pubsub_v1.PublisherClient()
-    topic_path = publisher.topic_path(PROJECT_ID, TOPIC_NAME)
-    PUBSUB_AVAILABLE = True
-except Exception as e:
-    print("Pub/Sub not available:", e)
-    PUBSUB_AVAILABLE = False
+publisher = pubsub_v1.PublisherClient()
+topic_path = publisher.topic_path(PROJECT_ID, TOPIC_NAME)
 
 # -------------------------------
 # Flask app
@@ -85,11 +80,9 @@ def get_file(filename: str):
 
     print("🔥 TRYING TO PUBLISH:", msg)
 
-    if PUBSUB_AVAILABLE:
-        future = publisher.publish(topic_path, json.dumps(msg).encode("utf-8"))
-        print("✅ MESSAGE SENT")
-    else:
-        print("❌ PUBSUB NOT AVAILABLE")
+    publisher.publish(topic_path, json.dumps(msg).encode("utf-8"))
+
+    print("MESSAGE SENT")
 
     return Response("forbidden\n", status=403)
 
