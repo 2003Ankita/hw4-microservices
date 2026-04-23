@@ -3,10 +3,11 @@ import json
 import logging
 from flask import Flask, Response, request
 from google.cloud import storage
-import google.cloud.logging
-from google.cloud.logging.handlers import CloudLoggingHandler
 from google.cloud import pubsub_v1
 
+# -------------------------------
+# Config
+# -------------------------------
 BUCKET_NAME = os.environ.get("BUCKET_NAME", "pagerank-bu-ap178152")
 PREFIX = os.environ.get("PREFIX", "")
 PORT = int(os.environ.get("PORT", "8080"))
@@ -20,13 +21,13 @@ BANNED = {
 }
 
 # -------------------------------
-# Setup logging
+# Logging
 # -------------------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("hw4-web")
 
 # -------------------------------
-# Setup GCS (optional)
+# GCS setup (optional)
 # -------------------------------
 try:
     storage_client = storage.Client()
@@ -37,7 +38,7 @@ except Exception as e:
     GCS_AVAILABLE = False
 
 # -------------------------------
-# Setup Pub/Sub (CRITICAL)
+# Pub/Sub setup (REQUIRED)
 # -------------------------------
 publisher = pubsub_v1.PublisherClient()
 topic_path = publisher.topic_path(PROJECT_ID, TOPIC_NAME)
@@ -63,12 +64,12 @@ def root():
 @app.get("/<path:filename>")
 def get_file(filename: str):
 
-    # ---- banned country logic ----
     country = request.headers.get("X-Country", "").strip()
-
-    print("DEBUG HEADERS:", dict(request.headers))
     print("DEBUG COUNTRY:", country)
 
+    # -------------------------------
+    # BANNED COUNTRY LOGIC
+    # -------------------------------
     if country in BANNED:
         msg = {
             "event": "FORBIDDEN",
@@ -76,21 +77,28 @@ def get_file(filename: str):
             "path": request.path,
         }
 
-    logger.critical("403 forbidden (banned country)", extra=msg)
+        logger.critical("403 forbidden (banned country)", extra=msg)
 
-    print("🔥 TRYING TO PUBLISH:", msg)
+        print("🔥 TRYING TO PUBLISH:", msg)
 
-    publisher.publish(topic_path, json.dumps(msg).encode("utf-8"))
+        publisher.publish(
+            topic_path,
+            json.dumps(msg).encode("utf-8")
+        )
 
-    print("MESSAGE SENT")
+        print("✅ MESSAGE SENT")
 
-    return Response("forbidden\n", status=403)
+        return Response("forbidden\n", status=403, mimetype="text/plain")
 
-    # ---- LOCAL MODE (no GCP) ----
+    # -------------------------------
+    # LOCAL MODE (no GCS)
+    # -------------------------------
     if not GCS_AVAILABLE:
         return Response("local test mode\n", status=200, mimetype="text/plain")
 
-    # ---- normal GCS file serving ----
+    # -------------------------------
+    # GCS FILE SERVING
+    # -------------------------------
     obj_name = f"{PREFIX}{filename}" if PREFIX else filename
     blob = bucket.blob(obj_name)
 
@@ -102,7 +110,7 @@ def get_file(filename: str):
     return Response(data, status=200, mimetype="text/html")
 
 # -------------------------------
-# Run app
+# Run server
 # -------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=PORT)
