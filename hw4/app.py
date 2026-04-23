@@ -81,14 +81,17 @@ def get_file(filename: str):
             "path": request.path,
         }
 
-        logger.critical("403 forbidden (banned country)", extra=msg)
+    logger.critical("403 forbidden (banned country)", extra=msg)
 
-        if PUBSUB_AVAILABLE:
-            publisher.publish(topic_path, json.dumps(msg).encode("utf-8"))
-        else:
-            print("❌ Pub/Sub NOT available")
+    print("🔥 TRYING TO PUBLISH:", msg)
 
-        return Response("forbidden\n", status=403, mimetype="text/plain")
+    if PUBSUB_AVAILABLE:
+        future = publisher.publish(topic_path, json.dumps(msg).encode("utf-8"))
+        print("✅ MESSAGE SENT")
+    else:
+        print("❌ PUBSUB NOT AVAILABLE")
+
+    return Response("forbidden\n", status=403)
 
     # ---- LOCAL MODE (no GCP) ----
     if not GCS_AVAILABLE:
