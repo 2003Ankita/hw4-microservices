@@ -20,33 +20,32 @@ BANNED = {
 }
 
 # -------------------------------
-# Setup logging (works locally + GCP)
+# Setup logging
 # -------------------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("hw4-web")
 
 # -------------------------------
-# Try connecting to GCP services
+# Setup GCS (optional)
 # -------------------------------
-GCP_AVAILABLE = True
-
 try:
-    # Cloud Logging
-    cl = google.cloud.logging.Client()
-    handler = CloudLoggingHandler(cl)
-    logger.addHandler(handler)
-
-    # GCS
     storage_client = storage.Client()
     bucket = storage_client.bucket(BUCKET_NAME)
+    GCS_AVAILABLE = True
+except Exception as e:
+    print("GCS not available:", e)
+    GCS_AVAILABLE = False
 
-    # Pub/Sub
+# -------------------------------
+# Setup Pub/Sub (CRITICAL)
+# -------------------------------
+try:
     publisher = pubsub_v1.PublisherClient()
     topic_path = publisher.topic_path(PROJECT_ID, TOPIC_NAME)
-
+    PUBSUB_AVAILABLE = True
 except Exception as e:
-    print("⚠️ GCP not available (running in local mode):", e)
-    GCP_AVAILABLE = False
+    print("Pub/Sub not available:", e)
+    PUBSUB_AVAILABLE = False
 
 # -------------------------------
 # Flask app
@@ -81,13 +80,15 @@ def get_file(filename: str):
 
         logger.critical("403 forbidden (banned country)", extra=msg)
 
-        if GCP_AVAILABLE:
+        if PUBSUB_AVAILABLE:
             publisher.publish(topic_path, json.dumps(msg).encode("utf-8"))
+        else:
+            print("❌ Pub/Sub NOT available")
 
         return Response("forbidden\n", status=403, mimetype="text/plain")
 
     # ---- LOCAL MODE (no GCP) ----
-    if not GCP_AVAILABLE:
+    if not GCS_AVAILABLE:
         return Response("local test mode\n", status=200, mimetype="text/plain")
 
     # ---- normal GCS file serving ----
